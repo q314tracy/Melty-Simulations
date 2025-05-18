@@ -1,26 +1,28 @@
 import pygame
 import math
 
+# window instance settings
 pygame.init()
 width, height = 600, 600
 screen = pygame.display.set_mode((width, height))
 clock = pygame.time.Clock()
 font = pygame.font.SysFont(None, 24)
 
+# circle settings
 center = (width // 2, height // 2)
 radius = 150
-num_points = 1
+num_points = 4
 
-angle_step = math.radians(2)  # rotation step for Q/E keys on setpoint heading
+# global variables
+spin_angle = 0.0 # simulation global angle of the robot
+spin_speed = 0.1*math.pi  # radians per frame for simulation
+spin_speed_step = math.radians(0.5)  # how much spin_speed changes per key cycle
+translate_vector_x = 0.0
+translate_vector_y = 0.0 # vector used to express desired movement in cartesian coordinate frame
+translate_power = 0.0 # translation power
+setpoint_heading = 0.0 # direction setpoint
 
-# Spin variables
-spin_angle = 0.0
-spin_speed = 0.0  # radians per frame, adjustable with A/D
-spin_speed_step = math.radians(0.5)  # how much spin_speed changes per key press
-translate_power = 0.0
-
-setpoint_heading = 0.0  # controlled with Q/E
-
+# find difference in two angles and wrap to [-pi, pi] interval
 def angle_diff(a, b):
     diff = a - b
     while diff > math.pi:
@@ -29,36 +31,46 @@ def angle_diff(a, b):
         diff += 2 * math.pi
     return diff
 
+# main loop
 running = True
 while running:
     screen.fill((30, 30, 30))
 
+    #handle instance end gracefully
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
 
+    #get keys that are pressed
     keys = pygame.key.get_pressed()
-    # Adjust setpoint heading with Q/E
-    if keys[pygame.K_q]:
-        setpoint_heading -= angle_step
-    if keys[pygame.K_e]:
-        setpoint_heading += angle_step
-    setpoint_heading %= 2 * math.pi
 
-    # Adjust spin speed and motor power with A/D and W/S
-    if keys[pygame.K_a]:
-        spin_speed -= spin_speed_step
-    if keys[pygame.K_d]:
-        spin_speed += spin_speed_step
+    #compose Y vector component
     if keys[pygame.K_w]:
-        translate_power = 100
+        translate_vector_x = 1
+    elif keys[pygame.K_s]:
+        translate_vector_x = -1
     else:
-        translate_power = 0
+        translate_vector_x = 0
+    
+    #compose X vector component
+    if keys[pygame.K_d]:
+        translate_vector_y = 1
+    elif keys[pygame.K_a]:
+        translate_vector_y = -1
+    else:
+        translate_vector_y = 0
+    
+    #extrapolate vector direction from X and Y components
+    setpoint_heading = math.atan2(translate_vector_y, translate_vector_x)
 
-    # Update spin angle
+    #extrapolate magnitude from X and Y components, and clamp to 1
+    translate_power = min(math.sqrt(translate_vector_x**2 + translate_vector_y**2), 1)
+
+
+    #update spin speed
     spin_angle += spin_speed
     spin_angle %= 2 * math.pi
-
+    
     # Calculate points rotated by spin_angle
     point_angles = [(i * (2 * math.pi / num_points) + spin_angle) % (2 * math.pi) for i in range(num_points)]
 
@@ -72,8 +84,9 @@ while running:
     sum_fy = 0
 
     for angle in point_angles:
-        x = center[0] + radius * math.cos(angle)
-        y = center[1] + radius * math.sin(angle)
+        # Shift angle so zero is up
+        x = center[0] + radius * math.cos(angle - math.pi / 2)
+        y = center[1] + radius * math.sin(angle - math.pi / 2)
 
         diff = angle_diff(angle, offset_heading)
 
@@ -82,11 +95,13 @@ while running:
             mag = 0  # one direction only
 
         tangent_angle = angle + math.pi / 2
-        tx = math.cos(tangent_angle)
-        ty = math.sin(tangent_angle)
+        tx = math.cos(tangent_angle - math.pi / 2)
+        ty = math.sin(tangent_angle - math.pi / 2)
 
-        fx = mag * translate_power * tx
-        fy = mag * translate_power * ty
+        force_scale = 100
+
+        fx = mag * translate_power * tx * force_scale 
+        fy = mag * translate_power * ty * force_scale
 
         sum_fx += fx
         sum_fy += fy
@@ -101,8 +116,9 @@ while running:
     pygame.draw.line(screen, (100, 255, 100), center, (center[0] + net_fx, center[1] + net_fy), 5)
     pygame.draw.circle(screen, (100, 255, 100), (int(center[0] + net_fx), int(center[1] + net_fy)), 8)
 
-    sp_x = center[0] + radius * math.cos(setpoint_heading)
-    sp_y = center[1] + radius * math.sin(setpoint_heading)
+    # Setpoint heading line rotated so zero is up
+    sp_x = center[0] + radius * math.cos(setpoint_heading - math.pi / 2)
+    sp_y = center[1] + radius * math.sin(setpoint_heading - math.pi / 2)
     pygame.draw.line(screen, (255, 255, 0), center, (sp_x, sp_y), 3)
 
     text = font.render(
